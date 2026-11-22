@@ -1,26 +1,30 @@
 import streamlit as st
 import torch
 import torch.nn.functional as F
+from torchvision import transforms
 import numpy as np
 import cv2
 from PIL import Image
-from transformers import AutoImageProcessor, AutoModelForImageClassification
+from transformers import AutoModelForImageClassification
 
 st.set_page_config(page_title="KisanNetra AI | Multi-Crop XAI Diagnostics", layout="wide")
 
 @st.cache_resource
 def load_model():
     model_id = "linkanjarad/mobilenet_v2_1.0_224-plant-disease-identification"
-    processor = AutoImageProcessor.from_pretrained(model_id)
     model = AutoModelForImageClassification.from_pretrained(model_id)
     model.eval()
-    return processor, model
+    preprocess = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    return preprocess, model
 
-processor, model = load_model()
+preprocess, model = load_model()
 
-def generate_gradcam(img_pil, model, processor):
-    inputs = processor(images=img_pil, return_tensors="pt")
-    input_tensor = inputs["pixel_values"]
+def generate_gradcam(img_pil, model, preprocess):
+    input_tensor = preprocess(img_pil).unsqueeze(0)
     
     activations = []
     gradients = []
@@ -115,7 +119,7 @@ if uploaded_file is not None:
     try:
         img = Image.open(uploaded_file).convert("RGB")
         with st.spinner("Running MobileNetV2 Inference & Computing Grad-CAM Gradients..."):
-            label, conf, orig_img, heatmap_img, overlay_img = generate_gradcam(img, model, processor)
+            label, conf, orig_img, heatmap_img, overlay_img = generate_gradcam(img, model, preprocess)
             
         st.markdown("---")
         st.success(f"### Diagnosis: **{label}** | Confidence Score: **{conf:.2f}%**")
