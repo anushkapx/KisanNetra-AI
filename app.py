@@ -8,7 +8,7 @@ from PIL import Image
 from transformers import AutoModelForImageClassification
 
 st.set_page_config(
-    page_title="KisanNetra — फसल स्वास्थ्य जांच",
+    page_title="KisanNetra - फसल स्वास्थ्य जांच",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
