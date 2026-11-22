@@ -235,11 +235,11 @@ def generate_gradcam_and_severity(img_pil, model, preprocess, selected_crop="Aut
     logits[0, pred_idx].backward()
     fh.remove()
     bh.remove()
-    
+
     act = activations[0].detach().numpy()[0]
     grad = gradients[0].detach().numpy()[0]
     weights = np.mean(grad, axis=(1, 2))
-    
-cam = np.zeros(act.shape[1:], dtype=np.float32)
-for i, w in enumerate(weights):
-    cam += w * act[i]
+
+    cam = np.zeros(act.shape[1:], dtype=np.float32)
+    for i, w in enumerate(weights):
+        cam += w * act[i]
