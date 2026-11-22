@@ -7,81 +7,149 @@ import cv2
 from PIL import Image
 from transformers import AutoModelForImageClassification
 
-# Page configuration
 st.set_page_config(
-    page_title="KisanNetra AI | Smart Crop Diagnostics",
-    page_icon="🌿",
+    page_title="KisanNetra — Crop Pathology Diagnostics",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-# Custom CSS for a vibrant, modern Agritech UI
+# Clean editorial aesthetic (warm stone background, crisp borders, zero gradient fluff)
 st.markdown("""
 <style>
-    /* Main background & typography */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap');
+
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        color: #18181B;
+    }
     .stApp {
-        background: linear-gradient(180deg, #f4fbf6 0%, #ffffff 100%);
+        background-color: #FAF9F6;
     }
-    /* Hero Banner */
-    .hero-box {
-        background: linear-gradient(135deg, #1b4332 0%, #2d6a4f 60%, #40916c 100%);
-        padding: 2.2rem 2rem;
-        border-radius: 18px;
-        color: white;
-        text-align: center;
-        box-shadow: 0 10px 25px rgba(27, 67, 50, 0.18);
-        margin-bottom: 1.5rem;
+    /* Hide default Streamlit chrome */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+
+    .block-container {
+        max-width: 1120px;
+        padding-top: 2.5rem;
+        padding-bottom: 4rem;
     }
-    .hero-title {
-        font-size: 2.4rem;
-        font-weight: 800;
-        margin-bottom: 0.4rem;
-        letter-spacing: -0.5px;
-    }
-    .hero-sub {
-        font-size: 1.05rem;
-        color: #d8f3dc;
-        margin-bottom: 1rem;
-    }
-    .badge-row {
+
+    /* Editorial Masthead */
+    .masthead {
+        border-bottom: 1px solid #E4E4E7;
+        padding-bottom: 1.5rem;
+        margin-bottom: 2rem;
         display: flex;
-        justify-content: center;
-        gap: 12px;
+        justify-content: space-between;
+        align-items: flex-end;
         flex-wrap: wrap;
+        gap: 1rem;
     }
-    .pill-badge {
-        background: rgba(255, 255, 255, 0.16);
-        border: 1px solid rgba(255, 255, 255, 0.3);
-        padding: 5px 14px;
-        border-radius: 999px;
-        font-size: 0.85rem;
+    .brand-title {
+        font-family: 'Newsreader', Georgia, serif;
+        font-size: 2.5rem;
         font-weight: 600;
-        color: #ffffff;
+        letter-spacing: -0.03em;
+        color: #14281D;
+        line-height: 1.1;
+        margin: 0;
     }
-    /* Metric / Diagnosis Cards */
-    .diag-card {
-        background: #ffffff;
-        border-left: 6px solid #2d6a4f;
-        padding: 1.2rem 1.5rem;
-        border-radius: 12px;
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
+    .brand-sub {
+        font-size: 0.95rem;
+        color: #52525B;
+        margin-top: 0.35rem;
+    }
+    .meta-tag {
+        font-size: 0.78rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #3F6212;
+        background: #ECFCCB;
+        border: 1px solid #D9F99D;
+        padding: 4px 10px;
+        border-radius: 4px;
+    }
+
+    /* Structured Cards */
+    .clean-card {
+        background: #FFFFFF;
+        border: 1px solid #E4E4E7;
+        border-radius: 8px;
+        padding: 1.4rem 1.5rem;
         margin-bottom: 1rem;
     }
-    .rx-organic {
-        background: #e8f5e9;
-        border: 1px solid #a5d6a7;
-        border-left: 6px solid #2e7d32;
-        padding: 1.2rem;
-        border-radius: 12px;
+    .card-kicker {
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #71717A;
+        margin-bottom: 0.4rem;
+    }
+    .diagnosis-heading {
+        font-family: 'Newsreader', Georgia, serif;
+        font-size: 1.75rem;
+        font-weight: 600;
+        color: #18181B;
+        margin: 0;
+        line-height: 1.25;
+    }
+    .status-pill-healthy {
+        display: inline-block;
+        background: #DCFCE7;
+        color: #166534;
+        font-size: 0.78rem;
+        font-weight: 600;
+        padding: 3px 10px;
+        border-radius: 99px;
+        margin-top: 0.6rem;
+    }
+    .status-pill-alert {
+        display: inline-block;
+        background: #FEE2E2;
+        color: #991B1B;
+        font-size: 0.78rem;
+        font-weight: 600;
+        padding: 3px 10px;
+        border-radius: 99px;
+        margin-top: 0.6rem;
+    }
+
+    /* Treatment Grid */
+    .protocol-box {
+        background: #FFFFFF;
+        border: 1px solid #E4E4E7;
+        border-radius: 8px;
+        padding: 1.35rem;
         height: 100%;
     }
-    .rx-chemical {
-        background: #fff8e1;
-        border: 1px solid #ffe082;
-        border-left: 6px solid #f57f17;
-        padding: 1.2rem;
-        border-radius: 12px;
-        height: 100%;
+    .protocol-title {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: #18181B;
+        margin-bottom: 0.5rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid #F4F4F5;
+    }
+    .protocol-body {
+        font-size: 0.92rem;
+        line-height: 1.6;
+        color: #3F3F46;
+        margin: 0;
+    }
+
+    /* Crop List Strip */
+    .crop-strip {
+        font-size: 0.84rem;
+        color: #52525B;
+        background: #FFFFFF;
+        border: 1px solid #E4E4E7;
+        border-radius: 6px;
+        padding: 0.75rem 1rem;
+        margin-top: 1.5rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -100,6 +168,11 @@ def load_model():
 
 preprocess, model = load_model()
 
+def format_disease_name(raw_label):
+    # Clean up underscores/triple underscores from dataset labels into readable titles
+    cleaned = raw_label.replace("___", " — ").replace("__", " ").replace("_", " ")
+    return " ".join(cleaned.split())
+
 def generate_gradcam(img_pil, model, preprocess):
     input_tensor = preprocess(img_pil).unsqueeze(0)
     activations, gradients = [], []
@@ -112,14 +185,13 @@ def generate_gradcam(img_pil, model, preprocess):
     logits = outputs.logits
     probs = F.softmax(logits, dim=-1)[0]
     
-    # Top-3 predictions for richer visual breakdown
     top3_probs, top3_indices = torch.topk(probs, 3)
     pred_idx = top3_indices[0].item()
     confidence = top3_probs[0].item() * 100
     raw_label = model.config.id2label[pred_idx]
     
     top3_list = [
-        (model.config.id2label[idx.item()], prob.item() * 100)
+        (format_disease_name(model.config.id2label[idx.item()]), prob.item() * 100)
         for idx, prob in zip(top3_indices, top3_probs)
     ]
     
@@ -145,152 +217,139 @@ def generate_gradcam(img_pil, model, preprocess):
     heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
     overlay = np.uint8(0.55 * orig_resized + 0.45 * heatmap)
     
-    return raw_label, confidence, top3_list, orig_resized, heatmap, overlay
+    return raw_label, format_disease_name(raw_label), confidence, top3_list, orig_resized, heatmap, overlay
 
 def get_kvk_advisory(label):
     low_label = label.lower()
     if "healthy" in low_label:
         return (
-            "Healthy Foliage (No Pathogen Detected)",
-            "Maintain standard irrigation and balanced NPK nutrition. Apply a preventive spray of Cold-Pressed Neem Oil (1500 ppm @ 3 ml/L) every 15 days.",
-            "No chemical fungicide or bactericide required—crop foliage is vigorous."
+            "Healthy Specimen",
+            "Maintain standard irrigation and balanced NPK nutrition. Apply a preventive foliar spray of Cold-Pressed Neem Oil (1500 ppm @ 3 ml/L) at 15-day intervals.",
+            "No chemical fungicide or bactericide intervention is warranted."
         )
     elif any(k in low_label for k in ["blight", "mildew", "spot", "rust", "scab", "rot"]):
         return (
-            "Fungal / Oomycete Foliar Pathology",
-            "Foliar spray of Trichoderma viride (5 g/L) or Copper Oxychloride 50 WP (2.5 g/L) during early lesion onset.",
-            "Systemic curative spray of Mancozeb 75 WP (2.0 g/L) or Azoxystrobin 23% SC (1.0 ml/L) at 10-day intervals."
+            "Fungal / Oomycete Pathology",
+            "Apply a foliar spray of Trichoderma viride (5 g/L) or Copper Oxychloride 50 WP (2.5 g/L) at initial lesion onset.",
+            "Administer a systemic curative spray of Mancozeb 75 WP (2.0 g/L) or Azoxystrobin 23% SC (1.0 ml/L) every 10 days."
         )
     elif any(k in low_label for k in ["virus", "mosaic", "curl"]):
         return (
-            "Viral Vector-Borne Pathology (Whitefly/Aphid Transmitted)",
-            "Install Yellow Sticky Traps (15/acre) and spray Neem Seed Kernel Extract (NSKE 5%). Rogue out severely infected plants.",
-            "Control sap-sucking vectors using Imidacloprid 17.8% SL (0.5 ml/L) or Thiamethoxam 25% WG (0.3 g/L)."
+            "Viral Vector-Borne Pathology",
+            "Install Yellow Sticky Traps (15/acre) and spray Neem Seed Kernel Extract (NSKE 5%). Rogue out severely symptomatic plants.",
+            "Control whitefly/aphid vectors using Imidacloprid 17.8% SL (0.5 ml/L) or Thiamethoxam 25% WG (0.3 g/L)."
         )
     elif "bacterial" in low_label:
         return (
             "Bacterial Foliar Infection",
-            "Prune infected foliage and apply Pseudomonas fluorescens (5 g/L) foliar bio-bactericide.",
-            "Spray Copper Hydroxide 77% WP (2.0 g/L) + Streptocycline (0.15 g/L) per KVK guidelines."
+            "Prune symptomatic foliage and apply Pseudomonas fluorescens (5 g/L) foliar bio-bactericide.",
+            "Spray Copper Hydroxide 77% WP (2.0 g/L) combined with Streptocycline (0.15 g/L) per KVK schedule."
         )
     else:
         return (
-            "Pest / Mite Foliar Infestation",
-            "Release predatory mites or apply Horticultural Mineral Oil / Neem Oil (5 ml/L).",
-            "Targeted acaricide application: Spiromesifen 22.9% SC (0.8 ml/L) on leaf undersides."
+            "Pest / Mite Infestation",
+            "Release predatory mites or apply Horticultural Mineral Oil / Neem Oil (5 ml/L) targeting leaf undersides.",
+            "Apply targeted acaricide: Spiromesifen 22.9% SC (0.8 ml/L) under field supervision."
         )
 
-# Sidebar for Project Context & Supported Crops
-with st.sidebar:
-    st.markdown("## 🌾 KisanNetra AI")
-    st.caption("Explainable Plant Pathology & KVK Advisory Platform")
-    st.markdown("---")
-    st.markdown("### 🌱 Supported Crops (14 Species)")
-    crops = [
-        "🍅 Tomato", "🥔 Potato", "🫑 Bell Pepper", "🌽 Corn (Maize)",
-        "🍎 Apple", "🍇 Grape", "🍊 Orange", "🍑 Peach",
-        "🍒 Cherry", "🍓 Strawberry", "🫘 Soybean", "🎃 Squash",
-        "🫐 Blueberry", "🍇 Raspberry"
-    ]
-    st.write(" • ".join(crops))
-    st.markdown("---")
-    st.markdown("### 🔬 How Grad-CAM Works")
-    st.info(
-        "Red/Yellow thermal zones highlight the exact necrotic lesions "
-        "used by MobileNetV2 to make its diagnosis, proving the model "
-        "ignores background soil or shadows."
-    )
-
-# Hero Banner
+# Masthead
 st.markdown("""
-<div class="hero-box">
-    <div class="hero-title">🌿 KisanNetra AI</div>
-    <div class="hero-sub">Explainable Multi-Crop Pathology & KVK Agronomic Decision Support System</div>
-    <div class="badge-row">
-        <span class="pill-badge">🧬 38 Disease Classes</span>
-        <span class="pill-badge">🌱 14 Crop Species</span>
-        <span class="pill-badge">🔥 Real-Time Grad-CAM XAI</span>
-        <span class="pill-badge">🚜 KVK Treatment Protocols</span>
+<div class="masthead">
+    <div>
+        <h1 class="brand-title">KisanNetra</h1>
+        <div class="brand-sub">Explainable Multi-Crop Pathology & Agronomic Decision Support</div>
     </div>
+    <div class="meta-tag">38 Classes · 14 Species · Grad-CAM XAI</div>
 </div>
 """, unsafe_allow_html=True)
 
-# Upload Section
+# Upload Zone
 uploaded_file = st.file_uploader(
-    "📸 Upload a clear leaf photograph to start AI diagnosis (JPG, JPEG, PNG)",
+    "Upload a high-resolution leaf specimen (JPG or PNG)",
     type=["jpg", "png", "jpeg"]
 )
 
 if uploaded_file is None:
-    # Clean 3-step onboarding cards when idle
-    st.markdown("### ✨ Quick Diagnostic Workflow")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.info("**1. Capture Leaf Specimen**\n\nUpload a close-up photo of an affected or healthy leaf under natural daylight.")
-    with col2:
-        st.success("**2. Visual XAI Verification**\n\nInspect the Grad-CAM saliency heatmap to verify lesion-level localization.")
-    with col3:
-        st.warning("**3. KVK Action Plan**\n\nReceive dual-tier organic bio-control and calibrated chemical dosages.")
+    st.markdown("""
+    <div class="clean-card" style="margin-top: 1rem;">
+        <div class="card-kicker">Diagnostic Pipeline</div>
+        <p style="color: #3F3F46; font-size: 0.95rem; line-height: 1.65; margin: 0;">
+            Upload an individual leaf photograph to run real-time classification across 38 plant pathologies. 
+            The system extracts spatial gradients from the terminal convolutional block of MobileNetV2 to generate a 
+            pixel-level Grad-CAM saliency map alongside dual-tier Krishi Vigyan Kendra (KVK) field recommendations.
+        </p>
+    </div>
+    <div class="crop-strip">
+        <strong>Supported Coverage (14 Crops):</strong> Apple · Bell Pepper · Blueberry · Cherry · Corn (Maize) · Grape · Orange · Peach · Potato · Raspberry · Soybean · Squash · Strawberry · Tomato
+    </div>
+    """, unsafe_allow_html=True)
 else:
     try:
         img = Image.open(uploaded_file).convert("RGB")
-        with st.spinner("🔍 Analyzing cellular leaf patterns & computing Grad-CAM gradients..."):
-            label, conf, top3_list, orig_img, heatmap_img, overlay_img = generate_gradcam(img, model, preprocess)
-            
-        is_healthy = "healthy" in label.lower()
-        status_color = "#2e7d32" if is_healthy else "#c62828"
-        status_icon = "✅" if is_healthy else "⚠️"
-        
-        # Top Metric Summary Row
-        m1, m2, m3 = st.columns([2, 1, 1])
-        with m1:
+        with st.spinner("Running MobileNetV2 inference and computing Grad-CAM saliency..."):
+            raw_label, clean_label, conf, top3_list, orig_img, heatmap_img, overlay_img = generate_gradcam(img, model, preprocess)
+
+        is_healthy = "healthy" in raw_label.lower()
+        pill_html = (
+            '<span class="status-pill-healthy">No Pathogen Detected</span>'
+            if is_healthy else
+            '<span class="status-pill-alert">Pathology Detected — Intervention Recommended</span>'
+        )
+
+        # Primary Diagnosis Header Card
+        c_left, c_right = st.columns([3, 1])
+        with c_left:
             st.markdown(f"""
-            <div class="diag-card" style="border-left-color: {status_color};">
-                <span style="font-size: 0.85rem; color: #555; font-weight: 600;">PRIMARY AI DIAGNOSIS</span><br>
-                <span style="font-size: 1.45rem; font-weight: 800; color: {status_color};">{status_icon} {label}</span>
+            <div class="clean-card">
+                <div class="card-kicker">Primary Classification</div>
+                <div class="diagnosis-heading">{clean_label}</div>
+                {pill_html}
             </div>
             """, unsafe_allow_html=True)
-        with m2:
-            st.metric(label="Model Confidence", value=f"{conf:.2f}%", delta="Verified XAI")
-        with m3:
-            st.metric(label="Inference Backbone", value="MobileNetV2", delta="38 Classes")
+        with c_right:
+            st.markdown(f"""
+            <div class="clean-card" style="text-align: right;">
+                <div class="card-kicker">Confidence</div>
+                <div class="diagnosis-heading">{conf:.1f}%</div>
+                <div style="font-size: 0.78rem; color: #71717A; margin-top: 0.6rem;">MobileNetV2 · 224px</div>
+            </div>
+            """, unsafe_allow_html=True)
 
-        # Interactive Tabs for Clean Presentation
-        tab1, tab2, tab3 = st.tabs(["🔥 Grad-CAM Visual Proof", "💊 KVK Treatment Protocol", "📊 Top-3 Probability Breakdown"])
-        
-        with tab1:
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.image(orig_img, caption="1. Standardized Leaf Input (224×224)", use_container_width=True)
-            with c2:
-                st.image(heatmap_img, caption="2. Grad-CAM Saliency Heatmap", use_container_width=True)
-            with c3:
-                st.image(overlay_img, caption="3. Diagnostic Lesion Overlay", use_container_width=True)
-                
-        with tab2:
-            pathology_type, organic_rx, chem_rx = get_kvk_advisory(label)
-            st.markdown(f"#### Recommended Action Plan — *{pathology_type}*")
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.markdown(f"""
-                <div class="rx-organic">
-                    <h4 style="color: #1b5e20; margin-top: 0;">🌱 Tier-1: Bio-Control & Organic Management</h4>
-                    <p style="color: #1f2937; font-size: 0.98rem;">{organic_rx}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            with col_b:
-                st.markdown(f"""
-                <div class="rx-chemical">
-                    <h4 style="color: #e65100; margin-top: 0;">🧪 Tier-2: Targeted Chemical Intervention (KVK)</h4>
-                    <p style="color: #1f2937; font-size: 0.98rem;">{chem_rx}</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-        with tab3:
-            st.markdown("#### Classifier Confidence Distribution (Top-3 Candidates)")
+        # Tri-Panel Saliency Grid
+        st.markdown('<div class="card-kicker" style="margin-top: 0.5rem;">Visual Attribution (Grad-CAM)</div>', unsafe_allow_html=True)
+        g1, g2, g3 = st.columns(3)
+        with g1:
+            st.image(orig_img, caption="Input Specimen (224 × 224)", use_container_width=True)
+        with g2:
+            st.image(heatmap_img, caption="Activation Saliency Map", use_container_width=True)
+        with g3:
+            st.image(overlay_img, caption="Lesion Localization Overlay", use_container_width=True)
+
+        # Agronomic Protocol
+        pathology_type, organic_rx, chem_rx = get_kvk_advisory(raw_label)
+        st.markdown(f'<div class="card-kicker" style="margin-top: 1.5rem;">Agronomic Protocol · {pathology_type}</div>', unsafe_allow_html=True)
+        p1, p2 = st.columns(2)
+        with p1:
+            st.markdown(f"""
+            <div class="protocol-box">
+                <div class="protocol-title">Tier 1 — Bio-Control & Organic Management</div>
+                <p class="protocol-body">{organic_rx}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        with p2:
+            st.markdown(f"""
+            <div class="protocol-box">
+                <div class="protocol-title">Tier 2 — Targeted Chemical Intervention (KVK)</div>
+                <p class="protocol-body">{chem_rx}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Subtle Top-3 Breakdown Expander
+        with st.expander("View Top-3 Probability Distribution"):
             for cand_label, cand_prob in top3_list:
-                st.write(f"**{cand_label}** — `{cand_prob:.2f}%`")
+                st.write(f"**{cand_label}** — {cand_prob:.2f}%")
                 st.progress(min(int(cand_prob), 100))
 
     except Exception as e:
-        st.error(f"Error processing image: {e}. Please upload a valid JPG or PNG leaf image.")
+        st.error(f"Could not process image: {e}")
+        
