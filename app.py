@@ -283,7 +283,7 @@ def get_kvk_advisory(label):
 st.markdown("""
 <div class="farm-header">
     <div class="hindi-greet">नमस्ते किसान भाई · आपकी फसल का डिजिटल साथी</div>
-    <h1 class="farm-title">KisanNetra — Crop Health Check</h1>
+    <h1 class="farm-title">KisanNetra - Crop Health Check</h1>
     <div class="farm-tagline">
         Take a close-up photo of any sick leaf to identify the exact disease in seconds, see the affected spots clearly, and get trusted Krishi Vigyan Kendra (KVK) remedies.
     </div>
