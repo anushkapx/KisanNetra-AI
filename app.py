@@ -10,7 +10,7 @@ from datetime import datetime
 from transformers import AutoModelForImageClassification
 
 st.set_page_config(
-    page_title="KisanNetra - Crop Health Check",
+    page_title="KisanNetra — Crop Health Check",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -188,7 +188,10 @@ def format_disease_name(raw_label):
     cleaned = raw_label.replace("___", " — ").replace("__", " ").replace("_", " ")
     return " ".join(cleaned.split())
 
-def generate_gradcam_and_severity(img_pil, model, preprocess, selected_crop="Auto-Detect (All 14 Crops)"):
+def extract_crop_species(raw_label):
+    return raw_label.split("___")[0].replace("_", " ").strip()
+
+def analyze_leaf(img_pil, model, preprocess, selected_crop="Auto-Detect (All 14 Crops)"):
     input_tensor = preprocess(img_pil).unsqueeze(0)
     activations = []
     gradients = []
@@ -199,17 +202,57 @@ def generate_gradcam_and_severity(img_pil, model, preprocess, selected_crop="Aut
 
     outputs = model(input_tensor)
     logits = outputs.logits
-    probs = F.softmax(logits, dim=-1)[0]
+    global_probs = F.softmax(logits, dim=-1)[0]
 
+    # STAGE 1: Unconstrained Global Verification across all 38 classes
+    global_top_prob, global_top_idx = torch.max(global_probs, dim=0)
+    global_raw_label = model.config.id2label[global_top_idx.item()]
+    detected_species = extract_crop_species(global_raw_label)
+    global_conf = global_top_prob.item() * 100
+
+    # Check 1A: Out-of-Distribution / Unknown object check
+    if global_conf < 20.0:
+        fh.remove()
+        bh.remove()
+        return {
+            "status": "ood_reject",
+            "global_conf": global_conf,
+            "detected_species": detected_species
+        }
+
+    # Check 1B: Strict Crop-Species Mismatch Verification
     if selected_crop != "Auto-Detect (All 14 Crops)":
-        crop_key = selected_crop.split(" ")[0].lower()
-        masked_probs = torch.zeros_like(probs)
-        for idx, lbl in model.config.id2label.items():
-            if crop_key in lbl.lower():
-                masked_probs[idx] = probs[idx]
-        if masked_probs.sum() > 0:
-            probs = masked_probs / masked_probs.sum()
+        expected_crop = selected_crop.split(" ")[0].lower()
+        # Sum total probability mass belonging to the user's selected crop
+        selected_crop_mass = sum(
+            global_probs[idx].item()
+            for idx, lbl in model.config.id2label.items()
+            if expected_crop in lbl.lower()
+        ) * 100
 
+        # If the image does NOT match the selected crop (detected species differs AND selected crop mass < 25%)
+        if expected_crop not in detected_species.lower() and selected_crop_mass < 25.0:
+            fh.remove()
+            bh.remove()
+            return {
+                "status": "crop_mismatch",
+                "selected_crop_clean": selected_crop.split(" ")[0],
+                "detected_species": detected_species,
+                "detected_condition": format_disease_name(global_raw_label),
+                "global_conf": global_conf,
+                "selected_crop_mass": selected_crop_mass
+            }
+
+        # Crop verified! Now compute disease probabilities within that verified crop
+        masked_probs = torch.zeros_like(global_probs)
+        for idx, lbl in model.config.id2label.items():
+            if expected_crop in lbl.lower():
+                masked_probs[idx] = global_probs[idx]
+        probs = masked_probs / masked_probs.sum()
+    else:
+        probs = global_probs
+
+    # STAGE 2: Disease Diagnosis, Grad-CAM & Severity
     k = min(3, int(torch.count_nonzero(probs).item()))
     top3_probs, top3_indices = torch.topk(probs, max(k, 1))
     pred_idx = top3_indices[0].item()
@@ -247,13 +290,13 @@ def generate_gradcam_and_severity(img_pil, model, preprocess, selected_crop="Aut
         raw_ratio = (np.sum(binary_lesion_mask) / (224 * 224)) * 100
         severity_pct = min(round(raw_ratio * 1.45, 1), 95.0)
         if severity_pct < 20.0:
-            severity_stage = "Stage 1 - Mild Infection"
+            severity_stage = "Stage 1 — Mild Infection"
             urgency_note = "Early onset. Start Option 1 (Organic Bio-Control) immediately."
         elif severity_pct < 45.0:
-            severity_stage = "Stage 2 - Moderate Spread"
+            severity_stage = "Stage 2 — Moderate Spread"
             urgency_note = "Active lesion growth. Apply KVK spray within 48 hours."
         else:
-            severity_stage = "Stage 3 - Severe Infestation"
+            severity_stage = "Stage 3 — Severe Infestation"
             urgency_note = "High yield-loss risk! Prune worst leaves and spray KVK fungicide/bactericide today."
 
     orig_resized = np.array(img_pil.resize((224, 224)))
@@ -261,11 +304,19 @@ def generate_gradcam_and_severity(img_pil, model, preprocess, selected_crop="Aut
     heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
     overlay = np.uint8(0.55 * orig_resized + 0.45 * heatmap)
 
-    return (
-        raw_label, format_disease_name(raw_label), confidence,
-        severity_pct, severity_stage, urgency_note,
-        top3_list, orig_resized, heatmap, overlay
-    )
+    return {
+        "status": "ok",
+        "raw_label": raw_label,
+        "clean_label": format_disease_name(raw_label),
+        "confidence": confidence,
+        "severity_pct": severity_pct,
+        "severity_stage": severity_stage,
+        "urgency_note": urgency_note,
+        "top3_list": top3_list,
+        "orig_img": orig_resized,
+        "heatmap_img": heatmap,
+        "overlay_img": overlay
+    }
 
 def get_kvk_advisory(label):
     low_label = label.lower()
@@ -303,7 +354,7 @@ def get_kvk_advisory(label):
 def build_farmer_slip(clean_label, conf, severity_pct, severity_stage, pathology_type, organic_rx, chem_rx):
     now_str = datetime.now().strftime("%d %b %Y, %I:%M %p")
     return f"""============================================================
-         KISANNETRA AI - KVK CROP DIAGNOSTIC SLIP
+         KISANNETRA AI — KVK CROP DIAGNOSTIC SLIP
 ============================================================
 Date & Time       : {now_str}
 Detected Condition: {clean_label}
@@ -325,9 +376,9 @@ for accurate input dosage. Generated by KisanNetra AI.
 st.markdown("""
 <div class="farm-header">
     <div class="hindi-greet">नमस्ते किसान भाई · आपकी फसल का डिजिटल साथी</div>
-    <h1 class="farm-title">KisanNetra - Crop Health & Severity Check</h1>
+    <h1 class="farm-title">KisanNetra — Crop Health & Severity Check</h1>
     <div class="farm-tagline">
-        Upload a close-up leaf photo to identify the disease, measure how much of the leaf is infected, and download a ready Krishi Vigyan Kendra (KVK) treatment slip.
+        Upload a close-up leaf photo to identify the crop and disease, measure infected leaf area, and download a Krishi Vigyan Kendra (KVK) treatment slip.
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -340,7 +391,7 @@ with col_u1:
     )
 with col_u2:
     selected_crop = st.selectbox(
-        "🌱 Step 2: Select Crop (Optional)",
+        "🌱 Step 2: Select Expected Crop (Verified Against Image)",
         [
             "Auto-Detect (All 14 Crops)",
             "Potato (आलू)",
@@ -375,8 +426,8 @@ if uploaded_file is None:
         st.markdown("""
         <div class="step-card">
             <span class="step-num">Step 2</span>
-            <div class="step-heading">Safe Crop Check</div>
-            <p class="step-desc">Verifies the leaf against 14 supported crops and blocks uncertain guesses to protect your harvest.</p>
+            <div class="step-heading">Crop & Species Check</div>
+            <p class="step-desc">First verifies the plant species in the image and flags any mismatch with your selected crop.</p>
         </div>
         """, unsafe_allow_html=True)
     with s3:
@@ -405,20 +456,31 @@ if uploaded_file is None:
 else:
     try:
         img = Image.open(uploaded_file).convert("RGB")
-        with st.spinner("Scanning leaf lesions, measuring infection severity, and preparing KVK slip..."):
-            (
-                raw_label, clean_label, conf,
-                severity_pct, severity_stage, urgency_note,
-                top3_list, orig_img, heatmap_img, overlay_img
-            ) = generate_gradcam_and_severity(img, model, preprocess, selected_crop)
+        with st.spinner("Stage 1: Verifying crop species · Stage 2: Scanning leaf lesions..."):
+            res = analyze_leaf(img, model, preprocess, selected_crop)
 
-        if conf < 20.0:
+        if res["status"] == "ood_reject":
             st.warning(
-                f"**Unsupported Crop or Unclear Photo (Confidence: {conf:.1f}%)**\n\n"
+                f"**Unsupported Plant or Unclear Photo (Confidence: {res['global_conf']:.1f}%)**\n\n"
                 "This image does not strongly match any of our **14 supported crop species (38 classes)**. "
                 "Please upload a clear single-leaf close-up photo."
             )
+        elif res["status"] == "crop_mismatch":
+            st.error(
+                f"**Crop Mismatch Detected — Diagnosis Stopped!**\n\n"
+                f"You selected **{res['selected_crop_clean']}** in the crop menu, but the vision model identified this leaf as "
+                f"**{res['detected_species']}** (*{res['detected_condition']}*, Global Confidence: **{res['global_conf']:.1f}%**; "
+                f"{res['selected_crop_clean']} probability: **{res['selected_crop_mass']:.1f}%**).\n\n"
+                f"**Action:** Please upload a genuine **{res['selected_crop_clean']}** leaf photo, or switch Step 2 to **Auto-Detect (All 14 Crops)**."
+            )
         else:
+            raw_label = res["raw_label"]
+            clean_label = res["clean_label"]
+            conf = res["confidence"]
+            severity_pct = res["severity_pct"]
+            severity_stage = res["severity_stage"]
+            urgency_note = res["urgency_note"]
+
             is_healthy = "healthy" in raw_label.lower()
             status_badge = (
                 '<span class="badge-healthy">स्वस्थ फसल · Crop Looks Healthy</span>'
@@ -439,85 +501,4 @@ else:
                 st.markdown(f"""
                 <div class="result-banner" style="text-align: center;">
                     <div class="result-label">AI Confidence</div>
-                    <div class="result-disease" style="color: #1E4620;">{conf:.1f}%</div>
-                    <div style="font-size: 0.78rem; color: #5C6B5B;">Verified Match</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with c_sev:
-                sev_color = "#166534" if is_healthy else ("#D97706" if severity_pct < 35 else "#B8502A")
-                st.markdown(f"""
-                <div class="result-banner" style="text-align: center;">
-                    <div class="result-label">Infected Leaf Area</div>
-                    <div class="result-disease" style="color: {sev_color};">{severity_pct}%</div>
-                    <div style="font-size: 0.78rem; color: #5C6B5B;">{severity_stage}</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            if not is_healthy:
-                st.info(f"**Field Action Urgency:** {urgency_note}")
-
-            st.markdown("#### Visual Leaf Scan (Red/Yellow Zones Show Infected Tissue)")
-            g1, g2, g3 = st.columns(3)
-            with g1:
-                st.image(orig_img, caption="1. Uploaded Leaf (224×224)", use_container_width=True)
-            with g2:
-                st.image(heatmap_img, caption="2. Grad-CAM Saliency Map", use_container_width=True)
-            with g3:
-                st.image(overlay_img, caption="3. Lesion Overlay & Mask", use_container_width=True)
-
-            pathology_type, organic_rx, chem_rx = get_kvk_advisory(raw_label)
-            st.markdown(f"#### Recommended Field Care ({pathology_type})")
-            c_org, c_chem = st.columns(2)
-            with c_org:
-                st.markdown(f"""
-                <div class="remedy-organic">
-                    <div class="remedy-head" style="color: #1E4620;">Option 1: जैविक उपाय (Organic / Bio-Control)</div>
-                    <p class="remedy-text">{organic_rx}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            with c_chem:
-                st.markdown(f"""
-                <div class="remedy-chemical">
-                    <div class="remedy-head" style="color: #9A3412;">Option 2: रासायनिक उपचार (KVK Spray Dosage)</div>
-                    <p class="remedy-text">{chem_rx}</p>
-                </div>
-                """, unsafe_allow_html=True)
-
-            st.markdown("#### Farmer Action Tools (Offline Shop Slip & Audio Readout)")
-            slip_text = build_farmer_slip(
-                clean_label, conf, severity_pct, severity_stage,
-                pathology_type, organic_rx, chem_rx
-            )
-            tool_col1, tool_col2 = st.columns([1, 1])
-            with tool_col1:
-                st.download_button(
-                    label="📄 Download KVK Farmer Prescription Slip (.txt)",
-                    data=slip_text,
-                    file_name=f"KisanNetra_Advisory_{clean_label.replace(' ', '_')}.txt",
-                    mime="text/plain",
-                    use_container_width=True
-                )
-            with tool_col2:
-                spoken_summary = (
-                    f"Namaste Kisan Bhai. KisanNetra diagnosis is {clean_label}, "
-                    f"with {severity_pct} percent leaf area affected. "
-                    f"Recommended organic care: {organic_rx}"
-                ).replace('"', '').replace("'", "")
-                components.html(
-                    f"""
-                    <button onclick="const u = new SpeechSynthesisUtterance('{spoken_summary}'); u.rate = 0.95; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);"
-                        style="width: 100%; padding: 0.55rem 1rem; background-color: #1E4620; color: white; border: none; border-radius: 8px; font-family: Poppins, sans-serif; font-size: 0.92rem; font-weight: 600; cursor: pointer;">
-                        🔊 Listen to Diagnosis & Remedy Aloud
-                    </button>
-                    """,
-                    height=52
-                )
-
-            with st.expander("Technical Model Details & Top-3 Predictions (For Project Evaluation)"):
-                st.caption("Architecture: MobileNetV2 (1.0_224) | XAI: Terminal Layer Grad-CAM | Severity: OpenCV Saliency Thresholding (τ = 0.55)")
-                for cand_label, cand_prob in top3_list:
-                    st.write(f"**{cand_label}** — {cand_prob:.2f}%")
-                    st.progress(min(int(cand_prob), 100))
-
-    except Exception as e:
-        st.error(f"Could not read this image: {e}. Please upload a clear JPG or PNG photo.")
+                    <div class="result-disease" style
