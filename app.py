@@ -191,18 +191,28 @@ def format_disease_name(raw_label):
 def extract_crop_species(raw_label):
     return raw_label.split("___")[0].replace("_", " ").strip()
 
-def analyze_leaf(img_pil, model, preprocess, selected_crop="Auto-Detect (All 14 Crops)"):
-    input_tensor = preprocess(img_pil).unsqueeze(0)
-    activations = []
-    gradients = []
-    target_layer = model.mobilenet_v2.layer[-1]
+def focus_center_leaf(img_pil):
+    """Crops outer 12% background clutter from field photos so the central leaf dominates."""
+    w, h = img_pil.size
+    left = int(w * 0.12)
+    top = int(h * 0.12)
+    right = int(w * 0.88)
+    bottom = int(h * 0.88)
+    return img_pil.crop((left, top, right, bottom))
 
-    fh = target_layer.register_forward_hook(lambda m, i, o: activations.append(o))
-    bh = target_layer.register_full_backward_hook(lambda m, gi, go: gradients.append(go[0]))
+def analyze_leaf(img_pil, model, preprocess, selected_crop="Auto-Detect (All 14 Crops)", focus_crop=True):
+    working_img = focus_center_leaf(img_pil) if focus_crop else img_pil
 
-    outputs = model(input_tensor)
-    logits = outputs.logits
-    global_probs = F.softmax(logits, dim=-1)[0]
+    # Multi-view Test-Time Augmentation (Original + Center-Focused + Horizontal Flip)
+    t_full = preprocess(img_pil).unsqueeze(0)
+    t_focus = preprocess(working_img).unsqueeze(0)
+    t_flip = preprocess(working_img.transpose(Image.FLIP_LEFT_RIGHT)).unsqueeze(0)
+
+    with torch.no_grad():
+        p_full = F.softmax(model(t_full).logits, dim=-1)[0]
+        p_focus = F.softmax(model(t_focus).logits, dim=-1)[0]
+        p_flip = F.softmax(model(t_flip).logits, dim=-1)[0]
+        global_probs = (0.30 * p_full) + (0.45 * p_focus) + (0.25 * p_flip)
 
     # STAGE 1: Unconstrained Global Verification across all 38 classes
     global_top_prob, global_top_idx = torch.max(global_probs, dim=0)
@@ -210,17 +220,14 @@ def analyze_leaf(img_pil, model, preprocess, selected_crop="Auto-Detect (All 14 
     detected_species = extract_crop_species(global_raw_label)
     global_conf = global_top_prob.item() * 100
 
-    # Check 1A: Out-of-Distribution / Unknown object check
     if global_conf < 20.0:
-        fh.remove()
-        bh.remove()
         return {
             "status": "ood_reject",
             "global_conf": global_conf,
             "detected_species": detected_species
         }
 
-    # Check 1B: Calibrated Crop-Species Mismatch Verification
+    # Check 1B: Strict Two-Stage Species Verification
     if selected_crop != "Auto-Detect (All 14 Crops)":
         expected_crop = selected_crop.split(" ")[0].lower()
         selected_crop_mass = sum(
@@ -229,9 +236,8 @@ def analyze_leaf(img_pil, model, preprocess, selected_crop="Auto-Detect (All 14 
             if expected_crop in lbl.lower()
         ) * 100
 
-        if expected_crop not in detected_species.lower() and global_conf >= 75.0 and selected_crop_mass < 5.0:
-            fh.remove()
-            bh.remove()
+        # If detected species does NOT match the selected crop and model is confident (>= 55%)
+        if expected_crop not in detected_species.lower() and global_conf >= 55.0 and selected_crop_mass < 15.0:
             return {
                 "status": "crop_mismatch",
                 "selected_crop_clean": selected_crop.split(" ")[0],
@@ -249,7 +255,7 @@ def analyze_leaf(img_pil, model, preprocess, selected_crop="Auto-Detect (All 14 
     else:
         probs = global_probs
 
-    # STAGE 2: Disease Diagnosis, Grad-CAM & Severity
+    # STAGE 2: Grad-CAM & Severity on the Winning Class
     k = min(3, int(torch.count_nonzero(probs).item()))
     top3_probs, top3_indices = torch.topk(probs, max(k, 1))
     pred_idx = top3_indices[0].item()
@@ -261,8 +267,15 @@ def analyze_leaf(img_pil, model, preprocess, selected_crop="Auto-Detect (All 14 
         for idx, prob in zip(top3_indices, top3_probs)
     ]
 
+    activations = []
+    gradients = []
+    target_layer = model.mobilenet_v2.layer[-1]
+    fh = target_layer.register_forward_hook(lambda m, i, o: activations.append(o))
+    bh = target_layer.register_full_backward_hook(lambda m, gi, go: gradients.append(go[0]))
+
+    outputs = model(t_focus)
     model.zero_grad()
-    logits[0, pred_idx].backward()
+    outputs.logits[0, pred_idx].backward()
     fh.remove()
     bh.remove()
 
@@ -296,7 +309,7 @@ def analyze_leaf(img_pil, model, preprocess, selected_crop="Auto-Detect (All 14 
             severity_stage = "Stage 3 — Severe Infestation"
             urgency_note = "High yield-loss risk! Prune worst leaves and spray KVK fungicide/bactericide today."
 
-    orig_resized = np.array(img_pil.resize((224, 224)))
+    orig_resized = np.array(working_img.resize((224, 224)))
     heatmap = cv2.applyColorMap(np.uint8(255 * cam), cv2.COLORMAP_JET)
     heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
     overlay = np.uint8(0.55 * orig_resized + 0.45 * heatmap)
@@ -407,6 +420,10 @@ with col_u2:
             "Raspberry"
         ]
     )
+    focus_crop = st.checkbox(
+        "🎯 Focus on Center Leaf (Removes outdoor background clutter)",
+        value=True
+    )
 
 if uploaded_file is None:
     st.markdown("#### How KisanNetra Helps Your Farm in 4 Steps")
@@ -453,8 +470,8 @@ if uploaded_file is None:
 else:
     try:
         img = Image.open(uploaded_file).convert("RGB")
-        with st.spinner("Stage 1: Verifying crop species · Stage 2: Scanning leaf lesions..."):
-            res = analyze_leaf(img, model, preprocess, selected_crop)
+        with st.spinner("Stage 1: Multi-view species verification · Stage 2: Scanning leaf lesions..."):
+            res = analyze_leaf(img, model, preprocess, selected_crop, focus_crop)
 
         if res["status"] == "ood_reject":
             st.warning(
@@ -499,7 +516,7 @@ else:
                 <div class="result-banner" style="text-align: center;">
                     <div class="result-label">AI Confidence</div>
                     <div class="result-disease" style="color: #1E4620;">{conf:.1f}%</div>
-                    <div style="font-size: 0.78rem; color: #5C6B5B;">Species Verified</div>
+                    <div style="font-size: 0.78rem; color: #5C6B5B;">Multi-View Verified</div>
                 </div>
                 """, unsafe_allow_html=True)
             with c_sev:
@@ -518,7 +535,7 @@ else:
             st.markdown("#### Visual Leaf Scan (Red/Yellow Zones Show Infected Tissue)")
             g1, g2, g3 = st.columns(3)
             with g1:
-                st.image(res["orig_img"], caption="1. Uploaded Leaf (224×224)", use_container_width=True)
+                st.image(res["orig_img"], caption="1. Focused Leaf Input (224×224)", use_container_width=True)
             with g2:
                 st.image(res["heatmap_img"], caption="2. Grad-CAM Saliency Map", use_container_width=True)
             with g3:
@@ -573,7 +590,7 @@ else:
                 )
 
             with st.expander("Technical Model Details & Top-3 Predictions (For Project Evaluation)"):
-                st.caption("Architecture: MobileNetV2 (1.0_224) | Two-Stage Species Verification | XAI: Terminal Layer Grad-CAM | Severity: OpenCV Saliency Thresholding (τ = 0.55)")
+                st.caption("Architecture: MobileNetV2 (1.0_224) + Multi-View Center-Crop TTA | Two-Stage Species Verification | XAI: Grad-CAM | Severity: OpenCV (τ = 0.55)")
                 for cand_label, cand_prob in res["top3_list"]:
                     st.write(f"**{cand_label}** — {cand_prob:.2f}%")
                     st.progress(min(int(cand_prob), 100))
