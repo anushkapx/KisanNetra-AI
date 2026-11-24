@@ -220,7 +220,7 @@ def analyze_leaf(img_pil, model, preprocess, selected_crop="Auto-Detect (All 14 
             "detected_species": detected_species
         }
 
-    # Check 1B: Strict Crop-Species Mismatch Verification
+    # Check 1B: Calibrated Crop-Species Mismatch Verification
     if selected_crop != "Auto-Detect (All 14 Crops)":
         expected_crop = selected_crop.split(" ")[0].lower()
         selected_crop_mass = sum(
@@ -229,8 +229,8 @@ def analyze_leaf(img_pil, model, preprocess, selected_crop="Auto-Detect (All 14 
             if expected_crop in lbl.lower()
         ) * 100
 
-if expected_crop not in detected_species.lower() and global_conf >= 75.0 and selected_crop_mass < 5.0:
-    fh.remove()
+        if expected_crop not in detected_species.lower() and global_conf >= 75.0 and selected_crop_mass < 5.0:
+            fh.remove()
             bh.remove()
             return {
                 "status": "crop_mismatch",
